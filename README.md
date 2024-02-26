@@ -1,5 +1,5 @@
-# high-performance-computing
-Using high performance computing to simulate the movement of a cloud of material in the atmospheric boundary layer.
+# material advection calculator 
+Calculate a numerical solution to the advection equation to simulate the movement of a cloud of material in the atmospheric boundary layer. This program is parallelised using OpenMP to improve performance and calculation speed.
 
 ## running the program
 Edit parameters in `advection2D.c` if needed, then build the program using the following instructions. The program will generate 3 output files: `initial.dat`, `average.dat` and `final.dat`. 
@@ -28,3 +28,6 @@ To generate graphs using the given plotting scripts, ensure that gnuplot is inst
 - To generate the **final** graph of the cloud of material, run `gnuplot plot_final`
 
 A script to generate the vertically average distribution of $u(x,y)$ is not provided in this repository, running the command `gnuplot`, then `plot 'average.dat'`
+
+---
+this repository contains my solution for ECM3446 High Performance Computing module offered by the University of Exeter. 
