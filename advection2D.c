@@ -1,14 +1,13 @@
 /*******************************************************************************
 2D advection example program which advects a Gaussian u(x,y) at a fixed velocity
 
-
-
-Outputs: initial.dat - inital values of u(x,y) 
+Outputs: initial.dat - initial values of u(x,y)
          final.dat   - final values of u(x,y)
 
          The output files have three columns: x, y, u
 
          Compile with: gcc -o advection2D -std=c99 advection2D.c -lm
+         With OpenMP enabled: gcc -fopemp -o advection2D -std=c99 advection2D.c -lm
 
 Notes: The time step is calculated using the CFL condition
 
@@ -57,6 +56,7 @@ int main() {
     /* Velocity */
     const float velx = 1.0; // Velocity in x direction
     const float vely = 0.0; // Velocity in y direction
+    float vel_x[NX+2]; // Horizontal velocity at each y position
 
     /* Arrays to store variables. These have NX+2 elements
        to allow boundary values to be stored at both ends */
@@ -65,8 +65,8 @@ int main() {
     float u[NX + 2][NY + 2];    // Array of u values
     float dudt[NX + 2][NY + 2]; // Rate of change of u
 
-    float x2;   // x squared (used to calculate iniital conditions)
-    float y2;   // y squared (used to calculate iniital conditions)
+    float x2;   // x squared (used to calculate initial conditions)
+    float y2;   // y squared (used to calculate initial conditions)
 
     /* Calculate distance between points */
     float dx = (xmax - xmin) / ((float) NX);
@@ -76,7 +76,7 @@ int main() {
     /* The fabs function gives the absolute value in case the velocity is -ve */
     float dt = CFL / ((fabs(velx) / dx) + (fabs(vely) / dy));
 
-    float average_u[NX];
+    float average_u[NX]; // Average u value at each x position
 
     /*** Report information about the calculation ***/
     printf("Grid spacing dx     = %g\n", dx);
@@ -90,21 +90,21 @@ int main() {
 
     /*** Place x points in the middle of the cell ***/
     /* LOOP 1 */
-#pragma omp parallel for
+#pragma omp parallel for shared(x, dx)
     for (int i = 0; i < NX + 2; i++) {
         x[i] = ((float) i - 0.5) * dx;
     }
 
     /*** Place y points in the middle of the cell ***/
     /* LOOP 2 */
-#pragma omp parallel for
+#pragma omp parallel for shared(y, dy)
     for (int j = 0; j < NY + 2; j++) {
         y[j] = ((float) j - 0.5) * dy;
     }
 
     /*** Set up Gaussian initial conditions ***/
     /* LOOP 3 */
-#pragma omp parallel for collapse(2) private(x2, y2)
+#pragma omp parallel for collapse(2) private(x2, y2) shared(u)
     for (int i = 0; i < NX + 2; i++) {
         for (int j = 0; j < NY + 2; j++) {
             x2 = (x[i] - x0) * (x[i] - x0);
@@ -116,8 +116,11 @@ int main() {
     /*** Write array of initial u values out to file ***/
     FILE *initialfile;
     initialfile = fopen("initial.dat", "w");
-#pragma omp parallel for collapse(2)
     /* LOOP 4 */
+    /* cannot be parallelised */
+    /* parallelisation does not guarantee the order preservation
+     * of the data, resulting in inconsistencies during graph
+     * generation and data checking */
     for (int i = 0; i < NX + 2; i++) {
         for (int j = 0; j < NY + 2; j++) {
             fprintf(initialfile, "%g %g %g\n", x[i], y[j], u[i][j]);
@@ -128,9 +131,11 @@ int main() {
     /*** Update solution by looping over time steps ***/
     /* LOOP 5 */
     /* cannot be parallelised */
-    /* nested for loops contain flow dependencies */
-    /* and anti-dependencies, causes inconsistencies in results */
+    /* Nested for loops contain flow dependencies where the 
+     * subsequent loops are required to be executed sequentially.
+     * Parallelising this loop will lead to inaccurate and inconsistent results. */
     for (int m = 0; m < nsteps; m++) {
+
         /*** Apply boundary conditions at u[0][:] and u[NX+1][:] ***/
         /* LOOP 6 */
 #pragma omp parallel for shared(u)
@@ -141,14 +146,13 @@ int main() {
 
         /*** Apply boundary conditions at u[:][0] and u[:][NY+1] ***/
         /* LOOP 7 */
-#pragma omp parallel for
+#pragma omp parallel for shared(u)
         for (int i = 0; i < NX + 2; i++) {
             u[i][0] = bval_lower;
             u[i][NY + 1] = bval_upper;
         }
 
-        float vel_x[NX+2];
-#pragma omp parallel for
+#pragma omp parallel for shared(vel_x)
         for (int i=0; i<NY+2; i++){
             // update horizontal velocity for every y value above 1.0
             if (y[i] > 1.0){
@@ -158,6 +162,9 @@ int main() {
                 vel_x[i] = 0;
             }
         }
+
+        // re-calculate max dt value based on updated max horizontal velocity
+        float max_dt = CFL / ((fabs(vel_x[NX+1]/dx) + (fabs(vely)/dy)));
 
         /*** Calculate rate of change of u using leftward difference ***/
         /* Loop over points in the domain but not boundary values */
@@ -170,19 +177,15 @@ int main() {
             }
         }
 
-        // update max dt value
-        float max_dt = CFL / ((fabs(vel_x[NX+1]/dx) + (fabs(vely)/dy)));
-
         /*** Update u from t to t+dt ***/
         /* Loop over points in the domain but not boundary values */
         /* LOOP 9 */
-#pragma omp parallel for shared(u, dudt)
+#pragma omp parallel for shared(u)
         for (int i = 1; i < NX + 1; i++) {
             for (int j = 1; j < NY + 1; j++) {
                 u[i][j] = u[i][j] + dudt[i][j] * max_dt;
             }
         }
-
     } // time loop
 
     /* calculate vertically averaged distribution and store it
@@ -209,8 +212,8 @@ int main() {
     /* LOOP 10 */
     /* cannot be parallelised */
     /* parallelisation does not guarantee the order preservation
-     * of the data, resulting in inconsistencies when generating 
-     * the final graph */
+     * of the data, resulting in inconsistencies during graph
+     * generation and data checking */
     for (int i = 0; i < NX + 2; i++) {
         for (int j = 0; j < NY + 2; j++) {
             fprintf(finalfile, "%g %g %g\n", x[i], y[j], u[i][j]);
